@@ -1,8 +1,9 @@
 # VanLifeHA
-Van Life helping ESP32 controller for KC868-A6
+Van Life assisting ESP32/ESPHome-based controller for KC868-A6 for Home Assistant.
 
 
 I'm hoping to have more info here soon, currently it's just the YAML and some photos until I'm done builting the project.
+
 ![Early Hardware Layout](https://github.com/bobbywaz/VanLifeHA/blob/main/early-hardware-layout.jpg?raw=true)
 
 ![Switches Preview](https://github.com/bobbywaz/VanLifeHA/blob/main/switches-preview.png?raw=true)
