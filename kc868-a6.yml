@@ -1,0 +1,248 @@
+# Just go through all the # comment lines and try not to get overwhelmed. It looks like a lot, but most of the work is done for you.
+
+# Rename this to whatever you'd like
+esphome:
+  name: ethelhome
+
+# Leave this alone
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+esp32_ble_tracker:  # Enables BLE tracking
+
+bluetooth_proxy:    # Enables Bluetooth proxy for Home Assistant
+
+captive_portal: #Enables you to connect from phone or laptop when off WIFI
+
+#This will only be available if you are not connected to the internet / an access point. I have not tested this and it might not work at all.
+web_server:
+  port: 80
+  auth:
+    username: "user"
+    password: "password"
+  include_internal: true
+
+ota:
+  password: "iliketurtles"
+  platform: esphome
+
+
+#   Change this with your own WIFI
+wifi:
+  id: my_wifi
+  networks:
+    - ssid: "Good Job Bob's Orphanage"
+      password: "iliketurtles"
+    - ssid: "Owlbear"
+      password: "iliketurtles"
+# This is a WIFI hotspot your ESP32 will make if it cannot connect to a network
+  ap:
+    ssid: "Ethel Hotspot"
+    password: "iliketurtles"
+
+#   Change this with your own key 
+#   With powershell: [convert]::ToBase64String((1..32 | ForEach-Object {Get-Random -Maximum 256}))
+#   Using Linux: head -c 32 /dev/urandom | base64
+
+api:
+  encryption:
+    key: "sUPvOWVhYSPM4ze1hwCm7kqvY9rSvDmKcPA3f0pCDy0="
+
+#   I have attached this font in Github but it has to be in the folder 'fonts' in the same directory
+font:
+  - id: font_small
+    file: "fonts/roboto.ttf"
+    size: 10
+    
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x32"
+    address: 0x3C
+    lambda: |-
+      // Display IP Address
+      it.printf(0, 0, id(font_small), "IP:");
+      if (id(my_wifi).is_connected()) {
+        auto ip_list = id(my_wifi).get_ip_addresses();
+        if (!ip_list.empty()) {
+          it.printf(25, 0, id(font_small), "%s", ip_list.front().str().c_str());
+        } else {
+          it.printf(25, 0, id(font_small), "No IP");
+        }
+      } else {
+        it.printf(25, 0, id(font_small), "Disconnected");
+      }
+
+      // Display Starter Battery Voltage
+      it.printf(0, 10, id(font_small), "Starter: %.2f V", id(starter_voltage).state);
+
+      // Display Leisure Battery Voltage
+      it.printf(0, 20, id(font_small), "Leisure: %.2f V", id(leisure_voltage).state);
+
+uart:
+  - id: rs485
+    tx_pin: GPIO27
+    rx_pin: GPIO14
+    baud_rate: 9600
+  - id: rs232
+    tx_pin: GPIO17
+    rx_pin: GPIO16
+    baud_rate: 9600
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+  # cs pin: GPIO5
+
+i2c:
+  sda: GPIO4
+  scl:
+    number: GPIO15
+    ignore_strapping_warning: true
+
+pcf8574:
+  - id: inputs
+    address: 0x22
+  - id: outputs
+    address: 0x24
+
+time:
+  - platform: ds1307
+    id: rtc_time
+
+binary_sensor:
+  - platform: gpio
+    name: "Lights Driver Side"
+    pin:
+      pcf8574: inputs
+      number: 0
+      mode: INPUT
+      inverted: true
+  - platform: gpio
+    name: "Lights Passenger Side"
+    pin:
+      pcf8574: inputs
+      number: 1
+      mode: INPUT
+      inverted: true
+  - platform: gpio
+    name: "LED Light Bar"
+    pin:
+      pcf8574: inputs
+      number: 2
+      mode: INPUT
+      inverted: true
+  - platform: gpio
+    name: "Seat Heater Driver Side"
+    pin:
+      pcf8574: inputs
+      number: 3
+      mode: INPUT
+      inverted: true
+  - platform: gpio
+    name: "Seat Heater Passenger Side"
+    pin:
+      pcf8574: inputs
+      number: 4
+      mode: INPUT
+      inverted: true
+  - platform: gpio
+    name: "Refrigerator"
+    pin:
+      pcf8574: inputs
+      number: 5
+      mode: INPUT
+      inverted: true
+
+switch:
+  - platform: gpio
+    name: "Lights Left"
+    id: relay_1
+    pin:
+      pcf8574: outputs
+      number: 0
+      mode: OUTPUT
+      inverted: true
+  - platform: gpio
+    name: "Lights Right"
+    id: relay_2
+    pin:
+      pcf8574: outputs
+      number: 1
+      mode: OUTPUT
+      inverted: true
+  - platform: gpio
+    name: "LED Light Bar"
+    id: relay_3
+    pin:
+      pcf8574: outputs
+      number: 2
+      mode: OUTPUT
+      inverted: true
+  - platform: gpio
+    name: "Seat Heater Driver Side"
+    id: relay_4
+    pin:
+      pcf8574: outputs
+      number: 3
+      mode: OUTPUT
+      inverted: true
+  - platform: gpio
+    name: "Seat Heater Passenger Side"
+    id: relay_5
+    pin:
+      pcf8574: outputs
+      number: 4
+      mode: OUTPUT
+      inverted: true
+  - platform: gpio
+    name: "Refrigerator"
+    id: relay_6
+    pin:
+      pcf8574: outputs
+      number: 5
+      mode: OUTPUT
+      inverted: true
+
+sensor:
+  - platform: adc
+    pin: GPIO39  # or whichever ADC pin you're using
+    name: "Van Starter Battery Voltage"
+    id: starter_voltage
+    attenuation: 11db
+    update_interval: 30s
+    filters:
+      - multiply: 10.66
+
+  - platform: adc
+    pin: GPIO36  # or whichever ADC pin you're using
+    name: "Van Leisure Battery Voltage"
+    id: leisure_voltage
+    attenuation: 11db
+    update_interval: 30s
+    filters:
+      - multiply: 10.66
+
+  - platform: dht
+    pin: GPIO33
+    model: DHT22
+    temperature:
+      name: "Van Temperature"
+      id: van_temp
+    humidity:
+      name: "Van Humidity"
+      id: van_humidity
+    update_interval: 30s
+
+  - platform: dht
+    pin: GPIO32
+    model: DHT22
+    temperature:
+      name: "Refrigerator Temperature"
+      id: refrigerator_temp
+    humidity:
+      name: "Refrigerator Humidity"
+      id: refrigerator_humidity
+    update_interval: 30s
