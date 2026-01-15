@@ -12,4 +12,4 @@ I'm hoping to have more info here soon, currently it's just the YAML and some ph
 
 ![Home Assistant Preview](https://github.com/bobbywaz/VanLifeHA/blob/main/home-assistant-preview.png?raw=true)
 
-![LED Screen](https://github.com/bobbywaz/VanLifeHA/blob/main/LED-screen.jpg?raw=true)
+![LED Screen](https://github.com/bobbywaz/VanLifeHA/blob/main/OLED_screen.jpg?raw=true)
