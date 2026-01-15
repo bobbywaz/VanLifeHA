@@ -1,6 +1,8 @@
 # VanLifeHA
 Van Life assisting ESP32/ESPHome-based controller for KC868-A6 for Home Assistant.
 
+The optional screen is: OLED Module 12864
+Just comment out the display if you are not going to use one.
 
 I'm hoping to have more info here soon, currently it's just the YAML and some photos until I'm done builting the project.
 
