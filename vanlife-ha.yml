@@ -1,0 +1,645 @@
+esphome:
+  name: ethelhome
+  min_version: 2025.12.2
+  build_path: build/ethelhome
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+esp32_ble_tracker:
+bluetooth_proxy:
+captive_portal:
+
+web_server:
+  port: 80
+  auth:
+    username: "b"
+    password: !secret web_server_password
+  include_internal: true
+
+ota:
+  password: !secret ota_password_ethelhome
+  platform: esphome
+
+wifi:
+  id: my_wifi
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+    - ssid: !secret wifi_ssid_2
+      password: !secret wifi_password
+  ap:
+    ssid: "Ethel Hotspot"
+    password: !secret wifi_ap_password
+  manual_ip:
+    static_ip: 10.168.3.99
+    gateway: 10.168.3.1
+    subnet: 255.255.255.0
+    dns1: 10.168.3.1
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+# ============================================================
+# KC868-A6 Physical Labels Cheat Sheet
+#
+# SCREW TERMINALS (van-friendly):
+#   IO-1 -> GPIO32
+#   IO-2 -> GPIO33
+#   DA-1 -> GPIO26
+#   DA-2 -> GPIO25
+#   A1 (analog in) -> GPIO36 (INPUT ONLY)
+#   A2 (analog in) -> GPIO39 (INPUT ONLY)
+#
+# HEADERS (not screw terminals):
+#   Right 6-pin header you photographed: 3V / CS / SI / CK / SO / GD
+#     CS -> GPIO22   (board label: CS)  [HEADER: 3V/CS/SI/CK/SO/GD]
+#     SI -> GPIO23   (board label: SI)  [HEADER: 3V/CS/SI/CK/SO/GD]
+#     CK -> GPIO18   (board label: CK)  [HEADER: 3V/CS/SI/CK/SO/GD]
+#     SO -> GPIO19   (board label: SO)  [HEADER: 3V/CS/SI/CK/SO/GD]
+#   LoRa header:
+#     RST -> GPIO21  (board label: RST) [HEADER: LoRa]
+#
+# KC868 DI-1..DI-6 and onboard relay driving are via PCF8574 (not raw GPIO).
+# ============================================================
+
+# -----------------------
+# OLED screen (I2C) — you ARE using this
+# -----------------------
+i2c:
+  # KC868 label: I2C/OLED SDA [HEADER: I2C/OLED]
+  sda: GPIO4
+  scl:
+    # KC868 label: I2C/OLED SCL [HEADER: I2C/OLED]
+    number: GPIO15
+    ignore_strapping_warning: true
+font:
+  - id: font_small
+    file: "fonts/roboto.ttf"
+    size: 10
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    lambda: |-
+      static int phase = 0;
+      static unsigned long next_phase = 0;
+      const unsigned long now = esphome::millis();
+      if (now >= next_phase) {
+        phase = (phase + 1) % 2;
+        next_phase = now + 4500;
+      }
+
+      // Line 1
+      it.printf(0, 0, id(font_small), "IP:");
+      if (id(my_wifi).is_connected()) {
+        auto ip_list = id(my_wifi).get_ip_addresses();
+        if (!ip_list.empty()) {
+          it.printf(25, 0, id(font_small), "%s", ip_list.front().str().c_str());
+        } else {
+          it.printf(25, 0, id(font_small), "No IP");
+        }
+      } else {
+        it.printf(25, 0, id(font_small), "Disconnected");
+      }
+
+      const bool has_starter = id(starter_voltage).has_state() && !isnan(id(starter_voltage).state);
+      const bool has_leisure = id(leisure_voltage).has_state() && !isnan(id(leisure_voltage).state);
+      const bool has_van_temp = id(van_temp).has_state() && !isnan(id(van_temp).state);
+      const bool has_fridge_temp = id(refrigerator_temp).has_state() && !isnan(id(refrigerator_temp).state);
+
+      char wifi_buf[8] = "--dB";
+      if (id(wifi_signal_strength).has_state() && !isnan(id(wifi_signal_strength).state)) {
+        snprintf(wifi_buf, sizeof(wifi_buf), "%ddb", static_cast<int>(id(wifi_signal_strength).state));
+      }
+      const char *status_text = id(ethel_status).has_state() && id(ethel_status).state ? "OK" : "DOWN";
+
+      if (phase == 0) {
+        if (has_starter) {
+          it.printf(0, 16, id(font_small), "Starter: %.2fV", id(starter_voltage).state);
+        } else {
+          it.printf(0, 16, id(font_small), "Starter: --.--V");
+        }
+        if (has_leisure) {
+          it.printf(0, 32, id(font_small), "Leisure: %.2fV", id(leisure_voltage).state);
+        } else {
+          it.printf(0, 32, id(font_small), "Leisure: --.--V");
+        }
+        it.printf(0, 48, id(font_small), "St:%s WiFi:%s", status_text, wifi_buf);
+      } else {
+        if (has_van_temp) {
+          it.printf(0, 16, id(font_small), "Van Tmp: %.1fF", id(van_temp).state);
+        } else {
+          it.printf(0, 16, id(font_small), "Van Tmp: --.-F");
+        }
+        if (has_fridge_temp) {
+          it.printf(0, 32, id(font_small), "Fridge: %.1fF", id(refrigerator_temp).state);
+        } else {
+          it.printf(0, 32, id(font_small), "Fridge: --.-F");
+        }
+        char uptime_buf[12] = "--h--m";
+        if (id(device_uptime).has_state() && !isnan(id(device_uptime).state)) {
+          int uptime_total = static_cast<int>(id(device_uptime).state);
+          int hours = uptime_total / 3600;
+          int minutes = (uptime_total % 3600) / 60;
+          snprintf(uptime_buf, sizeof(uptime_buf), "%dh%02dm", hours, minutes);
+        }
+        it.printf(0, 48, id(font_small), "Up:%s", uptime_buf);
+      }
+  # ============================================================
+  # TM1638 LED&KEY module (pins on your module: VCC GND STB CLK DIO)
+  #
+  # Wire TM1638 to the right 6-pin header you photographed:
+  #   VCC -> (NOT on this header; you likely need an external 5V buck for TM1638)
+  #   GND -> GD
+  #   STB -> CS  (GPIO22) [HEADER: 3V/CS/SI/CK/SO/GD]
+  #   CLK -> CK  (GPIO18) [HEADER: 3V/CS/SI/CK/SO/GD]
+  #   DIO -> SI  (GPIO23) [HEADER: 3V/CS/SI/CK/SO/GD]
+  # ============================================================
+  - platform: tm1638
+    id: tm1638_display
+    # KC868 label: CS [HEADER: 3V/CS/SI/CK/SO/GD]
+    stb_pin: GPIO22
+    # KC868 label: CK [HEADER: 3V/CS/SI/CK/SO/GD]
+    clk_pin: GPIO18
+    # KC868 label: SI [HEADER: 3V/CS/SI/CK/SO/GD]
+    dio_pin: GPIO23
+    intensity: 3
+    update_interval: 500ms
+    lambda: |-
+      static int t = 0;
+      t++;
+
+      const bool s_ok = id(starter_voltage).has_state() && !isnan(id(starter_voltage).state);
+      const bool l_ok = id(leisure_voltage).has_state() && !isnan(id(leisure_voltage).state);
+
+      if ((t % 4) < 2) {
+        if (s_ok) it.printf(0, "S%4.1f", id(starter_voltage).state);
+        else it.printf(0, "S OFF");
+      } else {
+        if (l_ok) it.printf(0, "L%4.1f", id(leisure_voltage).state);
+        else it.printf(0, "L OFF");
+      }
+
+# -----------------------
+# KC868 expanders for DI + onboard relays
+# -----------------------
+pcf8574:
+  - id: inputs
+    address: 0x22
+  - id: outputs
+    address: 0x24
+
+time:
+  - platform: ds1307
+    id: rtc_time
+
+# ============================================================
+# INPUTS (DI-1..DI-6) — preserved names (these are your DI terminals)
+# ============================================================
+binary_sensor:
+  - platform: gpio
+    name: "Lights Driver Side"
+    pin:
+      pcf8574: inputs
+      number: 0  # KC868 label: DI-1
+      mode: INPUT
+      inverted: true
+
+  - platform: gpio
+    name: "Lights Passenger Side"
+    pin:
+      pcf8574: inputs
+      number: 1  # KC868 label: DI-2
+      mode: INPUT
+      inverted: true
+
+  - platform: gpio
+    name: "LED Light Bar"
+    pin:
+      pcf8574: inputs
+      number: 2  # KC868 label: DI-3
+      mode: INPUT
+      inverted: true
+
+  - platform: gpio
+    name: "Seat Heater Driver Side"
+    pin:
+      pcf8574: inputs
+      number: 3  # KC868 label: DI-4
+      mode: INPUT
+      inverted: true
+
+  - platform: gpio
+    name: "Seat Heater Passenger Side"
+    pin:
+      pcf8574: inputs
+      number: 4  # KC868 label: DI-5
+      mode: INPUT
+      inverted: true
+
+  - platform: gpio
+    name: "Refrigerator"
+    pin:
+      pcf8574: inputs
+      number: 5  # KC868 label: DI-6
+      mode: INPUT
+      inverted: true
+
+  - platform: status
+    name: "Ethel Status"
+    id: ethel_status
+
+  # ============================================================
+  # TM1638 buttons (required id/name; short press = toggle only)
+  #
+  # Button layout:
+  #   1 Lights Left
+  #   2 Lights Right
+  #   3 LED Light Bar
+  #   4 Refrigerator
+  #   5 Relay Box Channel 1
+  #   6 Relay Box Channel 2
+  #   7 Seat Heater Driver
+  #   8 Seat Heater Passenger
+  # ============================================================
+  - platform: tm1638
+    id: tm_btn_1
+    name: "LED&KEY Button 1"
+    key: 0
+    on_press:
+      - switch.toggle: relay_1
+
+  - platform: tm1638
+    id: tm_btn_2
+    name: "LED&KEY Button 2"
+    key: 1
+    on_press:
+      - switch.toggle: relay_2
+
+  - platform: tm1638
+    id: tm_btn_3
+    name: "LED&KEY Button 3"
+    key: 2
+    on_press:
+      - switch.toggle: relay_3
+
+  - platform: tm1638
+    id: tm_btn_4
+    name: "LED&KEY Button 4"
+    key: 3
+    on_press:
+      - switch.toggle: relay_6
+
+  - platform: tm1638
+    id: tm_btn_5
+    name: "LED&KEY Button 5"
+    key: 4
+    on_press:
+      - switch.toggle: relay_box_1
+
+  - platform: tm1638
+    id: tm_btn_6
+    name: "LED&KEY Button 6"
+    key: 5
+    on_press:
+      - switch.toggle: relay_box_2
+
+  - platform: tm1638
+    id: tm_btn_7
+    name: "LED&KEY Button 7"
+    key: 6
+    on_press:
+      - switch.toggle: relay_4
+
+  - platform: tm1638
+    id: tm_btn_8
+    name: "LED&KEY Button 8"
+    key: 7
+    on_press:
+      - switch.toggle: relay_5
+
+# ============================================================
+# SENSORS
+# ============================================================
+sensor:
+  - platform: adc
+    # KC868 label: A2 analog screw terminal (INPUT ONLY)
+    pin: GPIO39
+    name: "Van Starter Battery Voltage"
+    id: starter_voltage
+    attenuation: 12db
+    update_interval: 10s
+    filters:
+      - sliding_window_moving_average:
+          window_size: 4
+      - multiply: 10.66
+      - delta: 0.05
+    on_value:
+      # ============================================================
+      # Engine ON default behavior:
+      # Starter >= 13.2V is treated as "engine running / alternator on"
+      #   -> turn BOTH seat heaters ON by default
+      # ============================================================
+      - if:
+          condition:
+            lambda: 'return x >= 13.2;'
+          then:
+            - switch.turn_on: relay_4
+            - switch.turn_on: relay_5
+
+      # ============================================================
+      # Voltage sag cutoff (immediate):
+      # If starter voltage drops below 11.9V at any time,
+      #   -> force BOTH seat heaters OFF immediately
+      # ============================================================
+      - if:
+          condition:
+            lambda: 'return x < 11.9;'
+          then:
+            - switch.turn_off: relay_4
+            - switch.turn_off: relay_5
+    on_value_range:
+      - below: 12.8
+        then:
+          - script.execute: engine_off_heaters_off
+      - above: 13.2
+        then:
+          - switch.turn_on: relay_4
+          - switch.turn_on: relay_5
+
+  - platform: adc
+    # KC868 label: A1 analog screw terminal (INPUT ONLY)
+    pin: GPIO36
+    name: "Van Leisure Battery Voltage"
+    id: leisure_voltage
+    attenuation: 12db
+    update_interval: 10s
+    filters:
+      - sliding_window_moving_average:
+          window_size: 4
+      - multiply: 10.66
+      - delta: 0.05
+
+  # ------------------------------------------------------------
+  # DHT sensors (temp + humidity) — preserved
+  # ------------------------------------------------------------
+  - platform: dht
+    # KC868 label: SO (header pin) [HEADER: 3V/CS/SI/CK/SO/GD]
+    pin: GPIO19
+    model: DHT22
+    temperature:
+      name: "Van Temperature"
+      id: van_temp
+      filters:
+        - lambda: |-
+            return x * 9.0 / 5.0 + 32.0;
+      unit_of_measurement: "°F"
+    humidity:
+      name: "Van Humidity"
+      id: van_humidity
+    update_interval: 30s
+
+  - platform: dht
+    # KC868 label: RST (LoRa header) [HEADER: LoRa]
+    pin: GPIO21
+    model: DHT22
+    temperature:
+      name: "Refrigerator Temperature"
+      id: refrigerator_temp
+      filters:
+        - lambda: |-
+            return x * 9.0 / 5.0 + 32.0;
+      unit_of_measurement: "°F"
+    humidity:
+      name: "Refrigerator Humidity"
+      id: refrigerator_humidity
+    update_interval: 30s
+
+  - platform: wifi_signal
+    name: "Van WiFi Signal"
+    id: wifi_signal_strength
+    update_interval: 60s
+
+  - platform: uptime
+    name: "Ethel Uptime"
+    id: device_uptime
+    update_interval: 60s
+
+# ============================================================
+# OUTPUTS (preserved HA names for onboard relays)
+# PLUS 4 ULN outputs for your external relay board
+# ============================================================
+switch:
+  # ============================================================
+  # TM1638 LEDs 1–8 mirror the 8 toggles above (same order as buttons)
+  # ============================================================
+  - platform: tm1638
+    name: "LED&KEY LED 1 (Lights Left)"
+    id: tm_led_1
+    led: 0
+
+  - platform: tm1638
+    name: "LED&KEY LED 2 (Lights Right)"
+    id: tm_led_2
+    led: 1
+
+  - platform: tm1638
+    name: "LED&KEY LED 3 (LED Light Bar)"
+    id: tm_led_3
+    led: 2
+
+  - platform: tm1638
+    name: "LED&KEY LED 4 (Refrigerator)"
+    id: tm_led_4
+    led: 3
+
+  - platform: tm1638
+    name: "LED&KEY LED 5 (Relay Box Ch1)"
+    id: tm_led_5
+    led: 4
+
+  - platform: tm1638
+    name: "LED&KEY LED 6 (Relay Box Ch2)"
+    id: tm_led_6
+    led: 5
+
+  - platform: tm1638
+    name: "LED&KEY LED 7 (Seat Heater Driver)"
+    id: tm_led_7
+    led: 6
+
+  - platform: tm1638
+    name: "LED&KEY LED 8 (Seat Heater Passenger)"
+    id: tm_led_8
+    led: 7
+
+  # Onboard relays (KC868 Output1..Output6) — PRESERVED NAMES
+  - platform: gpio
+    name: "Lights Left"
+    id: relay_1
+    pin:
+      pcf8574: outputs
+      number: 0
+      mode: OUTPUT
+      inverted: true
+    on_turn_on:
+      - switch.turn_on: tm_led_1
+    on_turn_off:
+      - switch.turn_off: tm_led_1
+
+  - platform: gpio
+    name: "Lights Right"
+    id: relay_2
+    pin:
+      pcf8574: outputs
+      number: 1
+      mode: OUTPUT
+      inverted: true
+    on_turn_on:
+      - switch.turn_on: tm_led_2
+    on_turn_off:
+      - switch.turn_off: tm_led_2
+
+  - platform: gpio
+    name: "LED Light Bar"
+    id: relay_3
+    pin:
+      pcf8574: outputs
+      number: 2
+      mode: OUTPUT
+      inverted: true
+    on_turn_on:
+      - switch.turn_on: tm_led_3
+    on_turn_off:
+      - switch.turn_off: tm_led_3
+
+  - platform: gpio
+    name: "Seat Heater Driver Side"
+    id: relay_4
+    pin:
+      pcf8574: outputs
+      number: 3
+      mode: OUTPUT
+      inverted: true
+    on_turn_on:
+      - switch.turn_on: tm_led_7
+    on_turn_off:
+      - switch.turn_off: tm_led_7
+
+  - platform: gpio
+    name: "Seat Heater Passenger Side"
+    id: relay_5
+    pin:
+      pcf8574: outputs
+      number: 4
+      mode: OUTPUT
+      inverted: true
+    on_turn_on:
+      - switch.turn_on: tm_led_8
+    on_turn_off:
+      - switch.turn_off: tm_led_8
+
+  - platform: gpio
+    name: "Refrigerator"
+    id: relay_6
+    pin:
+      pcf8574: outputs
+      number: 5
+      mode: OUTPUT
+      inverted: true
+    on_turn_on:
+      - switch.turn_on: tm_led_4
+    on_turn_off:
+      - switch.turn_off: tm_led_4
+
+  # ------------------------------------------------------------
+  # ULN2803A control lines (4 channels only, as requested)
+  #
+  # External relay board wiring reminder:
+  #   Relay board COM (near Y terminals) -> +12V
+  #   ULN COM -> +12V
+  #   ULN GND -> battery negative / KC868 GND
+  #   ULN OUT1..OUT4 -> relay board Y1..Y4
+  #
+  # These 4 are VAN-FRIENDLY screw terminals:
+  #   IO-1, IO-2, DA-1, DA-2
+  # ------------------------------------------------------------
+
+  - platform: gpio
+    name: "Relay Box Channel 1"
+    id: relay_box_1
+    pin:
+      # KC868 label: IO-1 screw terminal
+      number: GPIO32
+      mode: OUTPUT
+      inverted: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - switch.turn_on: tm_led_5
+    on_turn_off:
+      - switch.turn_off: tm_led_5
+
+  - platform: gpio
+    name: "Relay Box Channel 2"
+    id: relay_box_2
+    pin:
+      # KC868 label: IO-2 screw terminal
+      number: GPIO33
+      mode: OUTPUT
+      inverted: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - switch.turn_on: tm_led_6
+    on_turn_off:
+      - switch.turn_off: tm_led_6
+
+  - platform: gpio
+    name: "Relay Box Channel 3"
+    id: relay_box_3
+    pin:
+      # KC868 label: DA-1 screw terminal
+      number: GPIO26
+      mode: OUTPUT
+      inverted: true
+    restore_mode: ALWAYS_OFF
+
+  - platform: gpio
+    name: "Relay Box Channel 4"
+    id: relay_box_4
+    pin:
+      # KC868 label: DA-2 screw terminal
+      number: GPIO25
+      mode: OUTPUT
+      inverted: true
+    restore_mode: ALWAYS_OFF
+
+# ============================================================
+# ENGINE OFF -> delayed seat heater OFF
+#
+# Logic:
+#   - Treat engine OFF when starter voltage < 12.8V
+#   - Start a 3 minute timer each time that holds below 12.8V
+#   - After the delay and while still < 12.8V, force both heaters OFF
+#
+# Notes:
+#   - This does NOT fight manual toggles while engine is ON.
+#   - Each voltage drop restarts the countdown so it only fires once the voltage stays low.
+# ============================================================
+script:
+  - id: engine_off_heaters_off
+    mode: restart
+    then:
+      - delay: 3min
+      - if:
+          condition:
+            lambda: 'return id(starter_voltage).has_state() && !isnan(id(starter_voltage).state) && id(starter_voltage).state < 12.8;'
+          then:
+            - switch.turn_off: relay_4
+            - switch.turn_off: relay_5
